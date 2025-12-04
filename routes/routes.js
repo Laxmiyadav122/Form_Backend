@@ -1,41 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const Model = require('../model/model');
-
-// router.post('/post', async(req, res) =>{
-//    const data = new Model({
-//     name: req.body.name,
-//     email: req.body.email,
-//     password: req.body.password,
-//     age: req.body.age,
-//     gender: req.body.gender,
-//     phone: req.body.phone,
-//     address: req.body.address,
-//    })
-//    try{
-//     const dataToSave = await data.save();
-//     res.status(200).json(dataToSave)
-//    }
-//    catch(error){
-//     res.status(400).json({message: error.message})
-//    }
-// });
+const jwt = require('jsonwebtoken');
+// const auth = require('../middleware/auth');
+const bcrypt = require("bcrypt");
 
 router.post('/post', async (req, res) => {
     try {
+        const existingUser = await Model.findOne({email: req.body.email});
+        if(existingUser){
+            return res.status(400).json({error: ["Email already exists"]});
+        }
+        const hashedPassword = await bcrypt.hash(req.body.password,10);
+        req.body.password = hashedPassword;
+
       const newData = new Model(req.body);
       await newData.save();
+
       return res.status(201).json({ message: "Form submitted successfully" });
-    } catch (error) {
-      if (error.code === 11000) {
-        return res.status(400).json({ errors: ["Email already exists! Please use another email."] });
-      }
-  
-      if (error.name === "ValidationError") {
-        const messages = Object.values(error.errors).map(err => err.message);
-        return res.status(400).json({ errors: messages });  // <-- Must send array of error messages
-      }
-        return res.status(500).json({ errors: ["Server error. Please try again."] });
+    }  catch (error) {
+        return res.status(500).json({ errors: ["Server error"] });
     }
   });
   
@@ -43,7 +27,7 @@ router.post('/post', async (req, res) => {
 
 router.get('/getAll', async(req, res) =>{
     try{
-        const data = await Model.find();
+        const data = await Model.find().select("-password");
         res.json(data);
     }
     catch(error){
@@ -51,26 +35,46 @@ router.get('/getAll', async(req, res) =>{
     }
 })
 
-router.put('/update/:id', async(req, res) =>{
-    try{
-        const id = req.params.id;
-        const updateData = req.body;
-        const options = {new: true};
+// router.put('/update/:id', async(req, res) =>{
+//     try{
+//         const id = req.params.id;
+//         const updateData = req.body;
+//         const options = {new: true};
 
-        const result = await Model.findByIdAndUpdate(
-            id, updateData, options
-        )
-        res.send(result)
+//         const result = await Model.findByIdAndUpdate(
+//             id, updateData, options
+//         )
+//         res.send(result)
+//     }
+//     catch(error){
+//         res.status(400).json({message: error.message});
+//     }
+// });
+
+
+router.put('/update/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+
+        if (req.body.password && req.body.password.trim() !== "") {
+            req.body.password = await bcrypt.hash(req.body.password, 10);
+        }else{
+            delete req.body.password;
+        }
+
+        const updatedUser = await Model.findByIdAndUpdate(id, req.body, { new: true });
+
+        res.json({ message: "User updated successfully", data: updatedUser });
     }
-    catch(error){
-        res.status(400).json({message: error.message});
+    catch (error) {
+        res.status(400).json({ message: error.message });
     }
 });
 
 router.delete('/delete/:id', async(req, res) => {
     try{
         const id = req.params.id;
-        const data = await Model.findByIdAndDelete(id)
+        await Model.findByIdAndDelete(id)
         res.json({ message: "Document deleted successfully" });
 
     }
@@ -78,4 +82,38 @@ router.delete('/delete/:id', async(req, res) => {
         res.status(400).json({message: error.message});
     }
 });
+
+router.post("/login", async(req, res) =>{
+    const {email, password} = req.body;
+
+    try{
+        const user = await Model.findOne({email});
+
+        if(!user){
+            return res.status(400).json({error: ["User not found"]});
+        }
+        const isMatch = await bcrypt.compare(password, user.password);
+
+        if(!isMatch){
+            return res.status(400).json({errors: ["Invalid password"]});
+        }
+        const token = jwt.sign(
+            {id: user._id, email: user.email},
+            process.env.JWT_SECRET,
+            {expiresIn: "4h"}
+        );
+
+        res.json({
+            message: "Login successful",
+            token,
+            user: {
+                id: user._id,
+                email: user.email,
+                name: user.name
+            }
+        });
+    }catch(error){
+        res.status(500).json({error: ["Server error"]});
+    }
+})
 module.exports = router;
