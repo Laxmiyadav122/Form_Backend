@@ -9,7 +9,7 @@ router.post('/post', async (req, res) => {
     try {
         const existingUser = await Model.findOne({email: req.body.email});
         if(existingUser){
-            return res.status(400).json({error: ["Email already exists"]});
+            return res.status(400).json({errors: ["Email already exists"]});
         }
         const hashedPassword = await bcrypt.hash(req.body.password,10);
         req.body.password = hashedPassword;
@@ -19,6 +19,20 @@ router.post('/post', async (req, res) => {
 
       return res.status(201).json({ message: "Form submitted successfully" });
     }  catch (error) {
+        // Handle Mongoose validation errors
+        if (error.name === 'ValidationError') {
+            const errors = Object.values(error.errors).map(err => err.message);
+            return res.status(400).json({ errors });
+        }
+        
+        // Handle duplicate key error (unique constraint)
+        if (error.code === 11000) {
+            const field = Object.keys(error.keyPattern)[0];
+            return res.status(400).json({ errors: [`${field} already exists`] });
+        }
+        
+        // Generic server error
+        console.log("error: ", error);
         return res.status(500).json({ errors: ["Server error"] });
     }
   });
